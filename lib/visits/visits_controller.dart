@@ -5,6 +5,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import '../data/flaky_task_api.dart';
 import '../data/visit_store.dart';
 import 'visit.dart';
+import 'visits_state.dart';
 
 final taskApiProvider = Provider<FlakyTaskApi>(
   (ref) => FlakyTaskApi(
@@ -15,47 +16,6 @@ final visitStoreProvider = Provider<VisitStore>((ref) => FileVisitStore());
 final visitsProvider = NotifierProvider<VisitsController, VisitsState>(
   VisitsController.new,
 );
-
-class VisitNotice {
-  const VisitNotice(this.sequence, this.message, {this.taskId});
-  final int sequence;
-  final String message;
-  final String? taskId;
-}
-
-class VisitsState {
-  VisitsState({
-    required Map<String, Visit> visits,
-    required Map<String, PendingChange> changes,
-    required List<String> ids,
-    this.query = '',
-    this.initialized = false,
-    this.loading = true,
-    this.loadingMore = false,
-    this.nextCursor,
-    this.firstError,
-    this.pageError = false,
-    this.storageError,
-    this.notice,
-  }) : visits = Map.unmodifiable(visits),
-       changes = Map.unmodifiable(changes),
-       ids = List.unmodifiable(ids);
-
-  final Map<String, Visit> visits;
-  final Map<String, PendingChange> changes;
-  final List<String> ids;
-  final String query;
-  final bool initialized, loading, loadingMore, pageError;
-  final String? nextCursor, firstError, storageError;
-  final VisitNotice? notice;
-
-  VisitStatus displayedStatus(String id) {
-    final change = changes[id];
-    return change != null && change.phase != SyncPhase.failed
-        ? change.target
-        : visits[id]!.status;
-  }
-}
 
 class VisitsController extends Notifier<VisitsState> {
   final _visits = <String, Visit>{};
@@ -75,11 +35,15 @@ class VisitsController extends Notifier<VisitsState> {
   Future<void>? _initialization;
   Future<void> _writes = Future.value();
 
-  FlakyTaskApi get _api => ref.read(taskApiProvider);
-  VisitStore get _store => ref.read(visitStoreProvider);
+  late final FlakyTaskApi _api;
+  late final VisitStore _store;
 
   @override
   VisitsState build() {
+    // Dependencies belong to this controller's lifetime. Capturing the store
+    // also lets writes already queued at disposal finish without reading ref.
+    _api = ref.read(taskApiProvider);
+    _store = ref.read(visitStoreProvider);
     ref.onDispose(() {
       _disposed = true;
       _debounce?.cancel();
@@ -110,9 +74,21 @@ class VisitsController extends Notifier<VisitsState> {
     _notice = VisitNotice(++_noticeSequence, message, taskId: taskId);
   }
 
-  Future<void> initialize() => _initialization ??= _initialize();
+  Future<void> initialize() {
+    if (_disposed) return Future.value();
+    final inProgress = _initialization;
+    if (inProgress != null) return inProgress;
+    if (_initialized) return Future.value();
+    // Concurrent retry taps must share a restore: a second, late disk snapshot
+    // could otherwise overwrite work accepted after the first restore.
+    return _initialization = _initialize().whenComplete(() {
+      _initialization = null;
+    });
+  }
 
   Future<void> _initialize() async {
+    _loading = true;
+    _emit();
     try {
       final saved = await _store.read();
       if (_disposed) return;
@@ -147,7 +123,7 @@ class VisitsController extends Notifier<VisitsState> {
 
   /// Changes the query immediately, before the debounce, to hide stale results.
   void search(String query) {
-    if (query == _query) return;
+    if (_disposed || query == _query) return;
     _debounce?.cancel();
     _query = query;
     ++_generation;
@@ -243,7 +219,10 @@ class VisitsController extends Notifier<VisitsState> {
   }
 
   Future<void> toggle(String id) async {
-    if (!_initialized || _storageError != null || !_visits[id]!.canToggle) {
+    if (_disposed ||
+        !_initialized ||
+        _storageError != null ||
+        _visits[id]?.canToggle != true) {
       return;
     }
     final displayed = state.displayedStatus(id);
@@ -259,12 +238,12 @@ class VisitsController extends Notifier<VisitsState> {
           previous?.phase == SyncPhase.uncertain,
     );
     _emit();
-    if (await _saveSafely()) unawaited(_drain());
+    await _saveSafely();
   }
 
   Future<void> retry(String id) async {
     final change = _changes[id];
-    if (change == null || _storageError != null) return;
+    if (_disposed || change == null || _storageError != null) return;
     _changes[id] = PendingChange(
       id: id,
       target: change.target,
@@ -273,17 +252,15 @@ class VisitsController extends Notifier<VisitsState> {
           change.serverUncertain || change.phase == SyncPhase.uncertain,
     );
     _emit();
-    if (await _saveSafely()) unawaited(_drain());
+    await _saveSafely();
   }
 
   Future<void> retryStorage() async {
+    if (_disposed) return;
     if (!_initialized) {
-      _initialization = null;
-      _loading = true;
-      _emit();
       await initialize();
-    } else if (await _saveSafely()) {
-      unawaited(_drain());
+    } else {
+      await _saveSafely();
     }
   }
 
@@ -291,6 +268,8 @@ class VisitsController extends Notifier<VisitsState> {
     if (_initialized && _storageError == null) unawaited(_drain());
   }
 
+  // One sender preserves ordering across taps. Only a revision confirmed on
+  // disk is eligible; an acknowledgement can remove only that exact revision.
   Future<void> _drain() async {
     if (_syncing || _disposed || _storageError != null) return;
     _syncing = true;
@@ -345,7 +324,7 @@ class VisitsController extends Notifier<VisitsState> {
   }
 
   Future<bool> _saveSafely() async {
-    if (!_initialized) return false;
+    if (!_initialized || _disposed) return false;
     final snapshot = VisitSnapshot(visits: _visits, changes: _changes);
     final operation = _writes.then((_) => _store.write(snapshot));
     // Keep a failed write from poisoning all later write attempts.

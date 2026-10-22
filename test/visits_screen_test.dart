@@ -276,4 +276,67 @@ void main() {
       matchesGoldenFile('goldens/first_load.png'),
     );
   });
+
+  testWidgets('a remounted screen restores the retained search query', (
+    tester,
+  ) async {
+    final api = FakeApi()..onFetch = (_, query) async => TaskPage([], null);
+    final container = ProviderContainer(
+      overrides: [
+        taskApiProvider.overrideWithValue(api),
+        visitStoreProvider.overrideWithValue(MemoryStore()),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(visitsProvider.notifier).initialize();
+    container.read(visitsProvider.notifier).search('retained query');
+    await container.read(visitsProvider.notifier).refresh();
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(theme: visitTheme(), home: const VisitsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('search-visits')),
+    );
+    expect(field.controller!.text, 'retained query');
+    expect(find.text('No visits match "retained query"'), findsOneWidget);
+    container.read(visitsProvider.notifier).search('external change');
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    expect(field.controller!.text, 'external change');
+    expect(find.text('No visits match "external change"'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.bySemanticsLabel('Clear search'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    expect(container.read(visitsProvider).query, isEmpty);
+  });
+
+  testWidgets(
+    'scrolling near the bottom loads once and stops on a page error',
+    (tester) async {
+      final nextPage = Completer<TaskPage>();
+      final api = FakeApi()
+        ..onFetch = (cursor, _) => cursor == null
+            ? Future.value(
+                TaskPage([for (var i = 1; i <= 20; i++) task('$i')], '20'),
+              )
+            : nextPage.future;
+      await mount(tester, api, MemoryStore());
+      final scroll = find.byKey(const ValueKey('visits-scroll'));
+      await tester.drag(scroll, const Offset(0, -900));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.drag(scroll, const Offset(0, -100));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(api.fetches, [(null, ''), ('20', '')]);
+      nextPage.completeError(ApiException('Page unavailable'));
+      await tester.pumpAndSettle();
+      await tester.drag(scroll, const Offset(0, -100));
+      await tester.pumpAndSettle();
+      expect(api.fetches.length, 2);
+      expect(find.text('Couldn’t load more'), findsOneWidget);
+      expect(find.text('Site visit #20'), findsOneWidget);
+    },
+  );
 }

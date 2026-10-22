@@ -3,43 +3,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 
 import '../visits/visit.dart';
+import 'visit_badge.dart';
 import 'visit_theme.dart';
-
-class VisitBadge extends StatelessWidget {
-  const VisitBadge(
-    this.label, {
-    super.key,
-    this.failed = false,
-    this.neutral = false,
-  });
-  final String label;
-  final bool failed, neutral;
-
-  @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: neutral
-          ? VisitColors.background
-          : failed
-          ? VisitColors.errorBackground
-          : VisitColors.pendingBackground,
-      borderRadius: BorderRadius.circular(999),
-    ),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: Text(
-        label,
-        style: VisitType.badge.copyWith(
-          color: neutral
-              ? VisitColors.secondary
-              : failed
-              ? VisitColors.error
-              : VisitColors.pending,
-        ),
-      ),
-    ),
-  );
-}
 
 class VisitRow extends StatelessWidget {
   const VisitRow({
@@ -59,7 +24,7 @@ class VisitRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final largeText = MediaQuery.textScalerOf(context).scale(16) > 20;
+    final largeText = VisitLayout.stackForLargeText(context);
     final icon = switch (status) {
       VisitStatus.done => 'done',
       VisitStatus.archived => 'archived',
@@ -86,7 +51,10 @@ class VisitRow extends StatelessWidget {
             onTap: enabled ? onRetry : null,
             borderRadius: BorderRadius.circular(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+              constraints: const BoxConstraints(
+                minHeight: VisitLayout.minTapTarget,
+                minWidth: VisitLayout.minTapTarget,
+              ),
               child: Align(
                 alignment: Alignment.centerLeft,
                 widthFactor: 1,
@@ -123,8 +91,8 @@ class VisitRow extends StatelessWidget {
     // Give the entire 48dp box a hit region, while keeping the icon at x=16
     // and the text at x=56 as in Figma.
     final toggle = SizedBox(
-      width: 48,
-      height: 48,
+      width: VisitLayout.minTapTarget,
+      height: VisitLayout.minTapTarget,
       child: Semantics(
         button: visit.canToggle,
         enabled: visit.canToggle && enabled,
