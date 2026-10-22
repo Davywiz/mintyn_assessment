@@ -1,0 +1,266 @@
+import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:mintyn_assessment/data/flaky_task_api.dart';
+import 'package:mintyn_assessment/data/visit_store.dart';
+import 'package:mintyn_assessment/visits/visit.dart';
+import 'package:mintyn_assessment/visits/visits_controller.dart';
+
+import 'support/fakes.dart';
+
+void main() {
+  late FakeApi api;
+  late MemoryStore store;
+  late ProviderContainer container;
+  VisitsController controller() => container.read(visitsProvider.notifier);
+
+  setUp(() {
+    api = FakeApi();
+    store = MemoryStore();
+    container = ProviderContainer(
+      overrides: [
+        taskApiProvider.overrideWithValue(api),
+        visitStoreProvider.overrideWithValue(store),
+      ],
+    );
+  });
+  tearDown(() => container.dispose());
+  VisitsState current() => container.read(visitsProvider);
+
+  test('optimistic changes reach disk before the API', () async {
+    await controller().initialize();
+    store.writeGate = Completer<void>();
+    final toggle = controller().toggle('1');
+    expect(current().displayedStatus('1'), VisitStatus.done);
+    await flushAsync();
+    expect(api.updates, isEmpty);
+    store.writeGate!.complete();
+    await toggle;
+    await flushAsync();
+    expect(api.updates, [('1', 'done')]);
+    expect(store.saved.changes, isEmpty);
+    expect(store.saved.visits['1']!.status, VisitStatus.done);
+  });
+
+  test('known rejection rolls back display but keeps the intended change for retry', () async {
+    await controller().initialize();
+    api.onUpdate = (_, _) => Future.error(ApiException('Rejected'));
+    await controller().toggle('1');
+    await flushAsync();
+    expect(current().displayedStatus('1'), VisitStatus.open);
+    expect(current().changes['1']!.target, VisitStatus.done);
+    expect(store.saved.changes['1']!.phase, SyncPhase.failed);
+    expect(current().notice!.taskId, '1');
+    api.onUpdate = null;
+    await controller().retry('1');
+    await flushAsync();
+    expect(current().displayedStatus('1'), VisitStatus.done);
+    expect(current().changes, isEmpty);
+  });
+
+  test('accepted then timed-out writes stay uncertain and retry the absolute status', () async {
+    await controller().initialize();
+    var serverStatus = 'open';
+    api.onUpdate = (id, status) async {
+      serverStatus = status;
+      throw TimeoutException('Saved, but response lost');
+    };
+    await controller().toggle('1');
+    await flushAsync();
+    expect(serverStatus, 'done');
+    expect(current().displayedStatus('1'), VisitStatus.done);
+    expect(store.saved.changes['1']!.phase, SyncPhase.uncertain);
+    api.onUpdate = (id, status) async {
+      serverStatus = status;
+      return task(id, status: serverStatus, time: '2026-10-22T11:00:00Z');
+    };
+    await controller().retry('1');
+    await flushAsync();
+    expect(api.updates, [('1', 'done'), ('1', 'done')]);
+    expect(current().changes, isEmpty);
+  });
+
+  test('rapid toggles serialize writes and an old acknowledgement cannot erase the latest intent', () async {
+    await controller().initialize();
+    final first = Completer<Map<String, dynamic>>();
+    final second = Completer<Map<String, dynamic>>();
+    api.onUpdate = (id, status) =>
+        status == 'done' ? first.future : second.future;
+    await controller().toggle('1');
+    await flushAsync();
+    await controller().toggle('1');
+    expect(current().displayedStatus('1'), VisitStatus.open);
+    expect(api.updates, [('1', 'done')]);
+    first.complete(task('1', status: 'done', time: '2026-10-22T10:00:00Z'));
+    await flushAsync();
+    expect(current().displayedStatus('1'), VisitStatus.open);
+    expect(current().changes['1']!.target, VisitStatus.open);
+    expect(api.updates, [('1', 'done'), ('1', 'open')]);
+    second.complete(task('1', time: '2026-10-22T10:01:00Z'));
+    await flushAsync();
+    expect(current().changes, isEmpty);
+  });
+
+  test('a newer tap is not sent while its disk write is pending', () async {
+    await controller().initialize();
+    final first = Completer<Map<String, dynamic>>();
+    api.onUpdate = (_, _) => first.future;
+    await controller().toggle('1');
+    await flushAsync();
+    store.writeGate = Completer<void>();
+    final secondToggle = controller().toggle('1');
+    first.complete(task('1', status: 'done', time: '2026-10-22T10:00:00Z'));
+    await flushAsync();
+    expect(api.updates.length, 1);
+    api.onUpdate = null;
+    store.writeGate!.complete();
+    await secondToggle;
+    await flushAsync();
+    expect(api.updates.last, ('1', 'open'));
+    expect(current().displayedStatus('1'), VisitStatus.open);
+  });
+
+  test(
+    'changing search clears old rows immediately and ignores late responses',
+    () async {
+      await controller().initialize();
+      final old = Completer<TaskPage>();
+      final latest = Completer<TaskPage>();
+      api.onFetch = (_, query) => query == 'first' ? old.future : latest.future;
+      controller().search('first');
+      expect(current().ids, isEmpty);
+      final oldFetch = controller().refresh();
+      controller().search('second');
+      final newFetch = controller().refresh();
+      latest.complete(TaskPage([task('second')], null));
+      await newFetch;
+      old.complete(TaskPage([task('first')], '20'));
+      await oldFetch;
+      expect(current().query, 'second');
+      expect(current().ids, ['second']);
+      expect(current().nextCursor, isNull);
+    },
+  );
+
+  test('overlapping pages are deduplicated and page failure preserves rows and cursor', () async {
+    api.onFetch = (cursor, _) async {
+      if (cursor == null) return TaskPage([task('1'), task('2')], '20');
+      if (cursor == '20') return TaskPage([task('2'), task('3')], '40');
+      throw ApiException('Page 3 unavailable');
+    };
+    await controller().initialize();
+    await controller().loadMore();
+    expect(current().ids, ['1', '2', '3']);
+    await controller().loadMore();
+    expect(current().ids, ['1', '2', '3']);
+    expect(current().nextCursor, '40');
+    expect(current().pageError, isTrue);
+    api.onFetch = (cursor, _) async => TaskPage([task('3'), task('4')], null);
+    await controller().loadMore();
+    expect(current().ids, ['1', '2', '3', '4']);
+    expect(api.fetches.last.$1, '40');
+  });
+
+  test(
+    'refresh invalidates a pending page and preserves pending mutations',
+    () async {
+      api.onFetch = (_, _) async => TaskPage([task('1')], '20');
+      await controller().initialize();
+      final page = Completer<TaskPage>();
+      api.onFetch = (cursor, _) => cursor == null
+          ? Future.value(TaskPage([task('1')], '20'))
+          : page.future;
+      final more = controller().loadMore();
+      api.onUpdate = (_, _) => Completer<Map<String, dynamic>>().future;
+      await controller().toggle('1');
+      await controller().refresh();
+      page.complete(TaskPage([task('old-page')], '40'));
+      await more;
+      expect(current().ids, ['1']);
+      expect(current().displayedStatus('1'), VisitStatus.done);
+      expect(current().nextCursor, '20');
+    },
+  );
+
+  test(
+    'relaunch restores pending work even if first fetch and update fail',
+    () async {
+      store.saved = VisitSnapshot(
+        visits: {'1': Visit.fromJson(task('1'))},
+        changes: {
+          '1': const PendingChange(
+            id: '1',
+            target: VisitStatus.done,
+            revision: 9,
+          ),
+        },
+      );
+      api.onFetch = (_, _) => Future.error(ApiException('Offline'));
+      api.onUpdate = (_, _) => Future.error(TimeoutException('Offline'));
+      await controller().initialize();
+      await flushAsync();
+      expect(current().ids, ['1']);
+      expect(current().displayedStatus('1'), VisitStatus.done);
+      expect(current().firstError, isNotNull);
+      expect(store.saved.changes['1']!.target, VisitStatus.done);
+      expect(api.updates, [('1', 'done')]);
+    },
+  );
+
+  test('a stale fetch cannot roll back an acknowledged status', () async {
+    await controller().initialize();
+    final stale = Completer<TaskPage>();
+    api.onFetch = (_, _) => stale.future;
+    final refresh = controller().refresh();
+    await controller().toggle('1');
+    await flushAsync();
+    stale.complete(TaskPage([task('1')], null));
+    await refresh;
+    expect(current().displayedStatus('1'), VisitStatus.done);
+  });
+
+  test('storage failure is visible and blocks network until storage retry succeeds', () async {
+    await controller().initialize();
+    store.failWrite = true;
+    await controller().toggle('1');
+    await flushAsync();
+    expect(api.updates, isEmpty);
+    expect(current().storageError, isNotNull);
+    store.failWrite = false;
+    await controller().retryStorage();
+    await flushAsync();
+    expect(api.updates, [('1', 'done')]);
+    expect(current().storageError, isNull);
+  });
+
+  test('unreadable storage is not overwritten and can be retried', () async {
+    store.failRead = true;
+    await controller().initialize();
+    expect(current().initialized, isFalse);
+    expect(current().storageError, isNotNull);
+    expect(api.fetches, isEmpty);
+    store.failRead = false;
+    await controller().retryStorage();
+    expect(current().initialized, isTrue);
+    expect(current().ids, ['1', '2']);
+  });
+
+  test(
+    'missing titles and archived tasks are handled without coercing status',
+    () async {
+      api.onFetch = (_, _) async => TaskPage([
+        {...task('53'), 'title': null},
+        task('89', status: 'archived'),
+        task('x', status: 'new-server-status'),
+      ], null);
+      await controller().initialize();
+      expect(current().visits['53']!.displayTitle, 'Untitled visit');
+      expect(current().visits['89']!.status, VisitStatus.archived);
+      expect(current().visits['x']!.status, VisitStatus.unknown);
+      await controller().toggle('89');
+      await controller().toggle('x');
+      expect(api.updates, isEmpty);
+    },
+  );
+}
