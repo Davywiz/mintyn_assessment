@@ -244,12 +244,16 @@ class VisitsController extends Notifier<VisitsState> {
       return;
     }
     final displayed = state.displayedStatus(id);
+    final previous = _changes[id];
     _changes[id] = PendingChange(
       id: id,
       target: displayed == VisitStatus.done
           ? VisitStatus.open
           : VisitStatus.done,
       revision: ++_revision,
+      serverUncertain:
+          previous?.serverUncertain == true ||
+          previous?.phase == SyncPhase.uncertain,
     );
     _emit();
     if (await _saveSafely()) unawaited(_drain());
@@ -262,23 +266,9 @@ class VisitsController extends Notifier<VisitsState> {
       id: id,
       target: change.target,
       revision: ++_revision,
+      serverUncertain:
+          change.serverUncertain || change.phase == SyncPhase.uncertain,
     );
-    _emit();
-    if (await _saveSafely()) unawaited(_drain());
-  }
-
-  Future<void> retryAll() async {
-    if (_storageError != null) return;
-    for (final id in _changes.keys.toList()) {
-      final change = _changes[id]!;
-      if (change.phase != SyncPhase.pending) {
-        _changes[id] = PendingChange(
-          id: id,
-          target: change.target,
-          revision: ++_revision,
-        );
-      }
-    }
     _emit();
     if (await _saveSafely()) unawaited(_drain());
   }
@@ -320,20 +310,27 @@ class VisitsController extends Notifier<VisitsState> {
           // Never let an older response erase a newer tap.
           if (_changes[sent.id]?.revision == sent.revision) {
             _changes.remove(sent.id);
+          } else if (_changes[sent.id] != null) {
+            _changes[sent.id] = _changes[sent.id]!.withUncertainServer(false);
           }
         } catch (error) {
           if (_disposed) return;
-          if (_changes[sent.id]?.revision == sent.revision) {
-            final uncertain = error is! ApiException;
-            _changes[sent.id] = sent.withPhase(
-              uncertain ? SyncPhase.uncertain : SyncPhase.failed,
-            );
+          final latest = _changes[sent.id];
+          if (latest?.revision == sent.revision) {
+            final uncertain = error is! ApiException || sent.serverUncertain;
+            _changes[sent.id] = sent
+                .withUncertainServer(uncertain)
+                .withPhase(uncertain ? SyncPhase.uncertain : SyncPhase.failed);
             _notify(
               uncertain
                   ? 'Couldn’t confirm ${_visits[sent.id]!.displayTitle}'
                   : 'Couldn’t update ${_visits[sent.id]!.displayTitle}',
               taskId: sent.id,
             );
+          } else if (latest != null && error is! ApiException) {
+            // Even a newer request's rejection cannot establish the server's
+            // status after an earlier response was lost.
+            _changes[sent.id] = latest.withUncertainServer(true);
           }
         }
         _emit();

@@ -122,6 +122,30 @@ void main() {
   });
 
   test(
+    'an old ambiguous timeout is carried through a newer rejected intent',
+    () async {
+      await controller().initialize();
+      final first = Completer<Map<String, dynamic>>();
+      api.onUpdate = (id, status) => status == 'done'
+          ? first.future
+          : Future.error(ApiException('Newer write rejected'));
+      await controller().toggle('1');
+      await flushAsync();
+      await controller().toggle('1');
+      first.completeError(TimeoutException('Older done may have been saved'));
+      await flushAsync();
+      expect(current().displayedStatus('1'), VisitStatus.open);
+      expect(current().changes['1']!.phase, SyncPhase.uncertain);
+      expect(store.saved.changes['1']!.serverUncertain, isTrue);
+      api.onUpdate = null;
+      await controller().retry('1');
+      await flushAsync();
+      expect(current().changes, isEmpty);
+      expect(api.updates.last, ('1', 'open'));
+    },
+  );
+
+  test(
     'changing search clears old rows immediately and ignores late responses',
     () async {
       await controller().initialize();

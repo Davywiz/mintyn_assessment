@@ -51,24 +51,40 @@ class PendingChange {
     required this.target,
     required this.revision,
     this.phase = SyncPhase.pending,
+    this.serverUncertain = false,
   });
   final String id;
   final VisitStatus target;
   final int revision;
   final SyncPhase phase;
+  final bool serverUncertain;
 
-  PendingChange withPhase(SyncPhase value) =>
-      PendingChange(id: id, target: target, revision: revision, phase: value);
+  PendingChange withPhase(SyncPhase value) => PendingChange(
+    id: id,
+    target: target,
+    revision: revision,
+    phase: value,
+    serverUncertain: serverUncertain,
+  );
+  PendingChange withUncertainServer(bool value) => PendingChange(
+    id: id,
+    target: target,
+    revision: revision,
+    phase: phase,
+    serverUncertain: value,
+  );
   Map<String, dynamic> toJson() => {
     'id': id,
     'target': target.name,
     'revision': revision,
     'phase': phase.name,
+    'serverUncertain': serverUncertain,
   };
   factory PendingChange.fromJson(Map<String, dynamic> json) => PendingChange(
     id: json['id'] as String,
     target: VisitStatus.values.byName(json['target'] as String),
     revision: json['revision'] as int,
     phase: SyncPhase.values.byName(json['phase'] as String),
+    serverUncertain: json['serverUncertain'] as bool? ?? false,
   );
 }
