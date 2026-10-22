@@ -271,6 +271,40 @@ void main() {
   });
 
   test(
+    'refresh resumes pending sends when it recovers a failed local write',
+    () async {
+      await controller().initialize();
+      store.failWrite = true;
+      await controller().toggle('1');
+      expect(current().storageError, isNotNull);
+      expect(api.updates, isEmpty);
+      store.failWrite = false;
+      await controller().refresh();
+      await flushAsync();
+      expect(current().storageError, isNull);
+      expect(api.updates, [('1', 'done')]);
+      expect(current().changes, isEmpty);
+    },
+  );
+
+  test(
+    'search during a blocked storage read does not start a phantom load',
+    () async {
+      store.failRead = true;
+      await controller().initialize();
+      controller().search('visit');
+      expect(current().query, 'visit');
+      expect(current().loading, isFalse);
+      expect(current().storageError, isNotNull);
+      expect(api.fetches, isEmpty);
+      store.failRead = false;
+      await controller().retryStorage();
+      expect(api.fetches.last.$2, 'visit');
+      expect(current().loading, isFalse);
+    },
+  );
+
+  test(
     'missing titles and archived tasks are handled without coercing status',
     () async {
       api.onFetch = (_, _) async => TaskPage([

@@ -128,8 +128,9 @@ class VisitRow extends StatelessWidget {
       child: Semantics(
         button: visit.canToggle,
         enabled: visit.canToggle && enabled,
-        label:
-            '${status == VisitStatus.done ? 'Reopen' : 'Mark done'} ${visit.displayTitle}, $statusDescription',
+        label: visit.canToggle
+            ? '${status == VisitStatus.done ? 'Reopen' : 'Mark done'} ${visit.displayTitle}, $statusDescription'
+            : '${visit.displayTitle}, $statusDescription',
         child: InkResponse(
           onTap: visit.canToggle && enabled ? onToggle : null,
           radius: 24,

@@ -156,8 +156,11 @@ class VisitsController extends Notifier<VisitsState> {
     _firstError = null;
     _pageError = false;
     _loadingMore = false;
-    _loading = true;
+    _loading = _initialized || _storageError == null;
     _emit();
+    // Initialization fetches the latest query after restoring the outbox. A
+    // blocked storage read must not start a spinner with no request behind it.
+    if (!_initialized) return;
     _debounce = Timer(
       const Duration(milliseconds: 300),
       () => unawaited(refresh()),
@@ -357,6 +360,8 @@ class VisitsController extends Notifier<VisitsState> {
         );
       _storageError = null;
       _emit();
+      // A refresh can recover storage too; resume any newly durable intents.
+      unawaited(_drain());
       return true;
     } catch (_) {
       if (_disposed) return false;

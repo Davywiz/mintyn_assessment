@@ -88,19 +88,6 @@ Dependencies: `flutter_hooks` owns text/focus/scroll/animation/lifecycle state;
 persistent app-support storage; `flutter_svg` renders the exact exported Figma SVGs;
 `intl` formats local timestamps. No code generation or runtime font downloads.
 
-## Design references and assets
-
-The copied Figma file is [zedV2](https://www.figma.com/design/FQJck0tEHHEy0JlJncXhLm/zedV2?node-id=3310-33203).
-Frames inspected: `3310:33203` (list), `3310:33357` (update failure), `3310:32955`
-(page loading), `3310:32815` (page error), `3310:32722` (row variants), `3310:33121`
-(skeleton), `3310:33094` (initial error), `3310:33182` (no matches), and
-`3310:32673` (320dp / 200% text).
-
-All seven icons were exported from those frames and are bundled under
-`assets/icons/`, at their original intrinsic sizes. The IBM Plex Sans font files
-come from [IBM/plex](https://github.com/IBM/plex) with their OFL license under
-`assets/fonts/`. No temporary Figma URLs are used at runtime.
-
 ## Limits and review
 
 The backend resets its database on every app restart. The app retains the outbox
@@ -112,7 +99,3 @@ saved data. File replacement protects against interrupted JSON writes; local
 storage failure is explicitly blocking. A crash before the initial local write
 finishes cannot be guaranteed durable. No background execution or multi-device
 conflict protocol is claimed.
-
-AI assisted with implementation, tests and documentation. Review the code and
-`DECISIONS.md`, run it yourself, and practice changing the notifier and UI before
-submitting: the follow-up requires explaining and modifying the code without AI.
