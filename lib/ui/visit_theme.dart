@@ -1,5 +1,15 @@
 import 'package:flutter/material.dart';
 
+/// Shared geometry that keeps controls accessible and list content aligned.
+abstract final class VisitLayout {
+  static const minTapTarget = 48.0;
+  static const pageInset = 16.0;
+  static const rowTextInset = 56.0;
+
+  static bool stackForLargeText(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(16) > 20;
+}
+
 abstract final class VisitColors {
   static const background = Color(0xFFF5F6F8);
   static const ink = Color(0xFF101828);
@@ -55,7 +65,10 @@ ThemeData visitTheme() => ThemeData(
   textButtonTheme: TextButtonThemeData(
     style: TextButton.styleFrom(
       foregroundColor: VisitColors.accent,
-      minimumSize: const Size(48, 48),
+      minimumSize: const Size(
+        VisitLayout.minTapTarget,
+        VisitLayout.minTapTarget,
+      ),
       textStyle: const TextStyle(
         fontFamily: 'IBM Plex Sans',
         fontSize: 13,
@@ -67,7 +80,7 @@ ThemeData visitTheme() => ThemeData(
     style: FilledButton.styleFrom(
       backgroundColor: VisitColors.accent,
       foregroundColor: Colors.white,
-      minimumSize: const Size(88, 48),
+      minimumSize: const Size(88, VisitLayout.minTapTarget),
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       textStyle: const TextStyle(

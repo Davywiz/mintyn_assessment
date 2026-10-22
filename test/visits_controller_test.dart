@@ -6,6 +6,7 @@ import 'package:mintyn_assessment/data/flaky_task_api.dart';
 import 'package:mintyn_assessment/data/visit_store.dart';
 import 'package:mintyn_assessment/visits/visit.dart';
 import 'package:mintyn_assessment/visits/visits_controller.dart';
+import 'package:mintyn_assessment/visits/visits_state.dart';
 
 import 'support/fakes.dart';
 
@@ -27,6 +28,73 @@ void main() {
   });
   tearDown(() => container.dispose());
   VisitsState current() => container.read(visitsProvider);
+
+  test(
+    'initialization callers await the same first fetch after restore',
+    () async {
+      final response = Completer<TaskPage>();
+      api.onFetch = (_, _) => response.future;
+      final first = controller().initialize();
+      await flushAsync();
+      expect(current().initialized, isTrue);
+      var secondFinished = false;
+      final second = controller().initialize().then(
+        (_) => secondFinished = true,
+      );
+      await flushAsync();
+      expect(secondFinished, isFalse);
+      response.complete(TaskPage([task('1')], null));
+      await Future.wait([first, second]);
+      expect(current().loading, isFalse);
+      expect(store.reads, 1);
+      expect(api.fetches, [(null, '')]);
+    },
+  );
+
+  test(
+    'concurrent storage retries share one restore and first fetch',
+    () async {
+      store.failRead = true;
+      await controller().initialize();
+      store.failRead = false;
+      store.readGate = Completer<void>();
+      final first = controller().retryStorage();
+      final second = controller().retryStorage();
+      store.readGate!.complete();
+      await Future.wait([first, second]);
+      expect(store.reads, 2); // One failed read, then one shared recovery.
+      expect(api.fetches, [(null, '')]);
+      expect(current().initialized, isTrue);
+    },
+  );
+
+  test(
+    'disposal before scheduled initialization does not access dependencies',
+    () async {
+      controller();
+      container.dispose();
+      await flushAsync();
+      expect(store.reads, 0);
+      expect(api.fetches, isEmpty);
+    },
+  );
+
+  test(
+    'disposal finishes already queued writes without sending new work',
+    () async {
+      await controller().initialize();
+      store.writeGate = Completer<void>();
+      final first = controller().toggle('1');
+      final second = controller().toggle('1');
+      await flushAsync();
+      container.dispose();
+      store.writeGate!.complete();
+      await Future.wait([first, second]);
+      expect(store.saved.changes['1']!.target, VisitStatus.open);
+      expect(store.saved.changes['1']!.revision, 2);
+      expect(api.updates, isEmpty);
+    },
+  );
 
   test('optimistic changes reach disk before the API', () async {
     await controller().initialize();

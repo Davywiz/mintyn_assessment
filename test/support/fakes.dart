@@ -19,10 +19,14 @@ class MemoryStore implements VisitStore {
   MemoryStore([VisitSnapshot? initial]) : saved = initial ?? VisitSnapshot();
   VisitSnapshot saved;
   bool failRead = false, failWrite = false;
+  int reads = 0;
+  Completer<void>? readGate;
   Completer<void>? writeGate;
 
   @override
   Future<VisitSnapshot> read() async {
+    reads++;
+    await readGate?.future;
     if (failRead) throw StateError('Disk unreadable');
     return saved;
   }

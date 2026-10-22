@@ -57,15 +57,21 @@ viewport with 200% system text size; the golden test also verifies that exact ca
 flutter analyze
 flutter test
 flutter test integration_test/visits_flow_test.dart -d <device-id>
+flutter build apk --debug
+flutter build ios --simulator --debug
 ```
 
 The native integration flow passes on the iPhone 18 Pro simulator (iOS 27.0)
-and Pixel 9 Pro emulator (Android 17). Android debug APK compilation and
-`flutter analyze` also pass.
+and Pixel 9 Pro emulator (Android 17). The 31 unit/widget tests, six unchanged
+golden baselines, Android debug APK build, iOS debug simulator build and
+`flutter analyze` all pass after the refactor.
 
 The unit/widget suite covers stale searches and pages, pagination deduplication,
 rapid toggles, rejected and ambiguous writes, storage failures/recovery, cold
-controller restoration, malformed fields, real hit regions and visual snapshots.
+controller restoration, concurrent initialization retries, queued writes at
+disposal, restored search fields, malformed fields, real hit regions and visual
+snapshots. Scrolling tests also verify one page request at a time and explicit
+retry after a page failure.
 The native integration test uses actual app-support storage and a fresh provider
 scope, then retries against the supplied backend. This simulates app reconstruction;
 it is not a test that force-kills the OS process.
@@ -80,8 +86,21 @@ these baselines were generated on macOS with the SDK above.
 - `lib/data/flaky_task_api.dart` — supplied backend; behavior left unchanged.
 - `lib/data/visit_store.dart` — versioned JSON cache/outbox with flushed atomic replacement.
 - `lib/visits/visit.dart` — parsed tasks and durable status intentions.
+- `lib/visits/visits_state.dart` — immutable view of confirmed records, visible IDs and intentions.
 - `lib/visits/visits_controller.dart` — Riverpod state, request generations, serialized syncing.
-- `lib/ui/` — Figma-derived styles, reusable rows and the Hooks/Riverpod screen.
+- `lib/ui/visits_screen.dart` — provider wiring, scroll/lifecycle hooks, refresh and snackbars.
+- `lib/ui/visits_header.dart`, `visit_search_field.dart` — responsive heading and local editing/focus state.
+- `lib/ui/visits_content.dart` — chooses loading, empty, error or lazy list slivers.
+- `lib/ui/visits_pagination.dart`, `visits_skeleton.dart`, `visits_feedback.dart` — focused loading and recovery views; the animated spinner stays private to pagination.
+- `lib/ui/visit_row.dart`, `visit_badge.dart`, `visit_theme.dart` — visit presentation and shared typography, colors and accessible geometry.
+
+Presentation widgets receive state and callbacks; only the screen depends on
+Riverpod. The controller stays together because query generations, durable writes
+and synchronization share ordering invariants. Persistence and JSON parsing remain
+outside it. Concurrent restores share one future. Already queued disk writes may
+finish after provider disposal, but the disposed controller starts no new sends.
+The search widget reconciles its local editing controller with Riverpod's query
+when mounted or changed externally, preserving normal typing selection.
 
 Dependencies: `flutter_hooks` owns text/focus/scroll/animation/lifecycle state;
 `hooks_riverpod` connects widgets to the testable notifier; `path_provider` locates

@@ -27,13 +27,16 @@
    snapshots and injectable API/store avoids generators and supports deterministic
    interleaving tests. The cost is manually coordinating initialization,
    invalidation and separate page/refresh errors rather than one `AsyncValue`.
+   Presentation widgets take state/callbacks; the screen wires providers. Shared
+   restore futures prevent overlapping retries; queued disk writes survive scope
+   disposal without starting new sends. Keep synchronization ordering in one owner.
 
 5. **Tests.** Controlled futures cover stale requests, pagination, rapid taps,
    durability-before-send, rejections, ambiguous writes across revisions, storage
-   failure and restoration. These failures can silently corrupt intent. Widget
-   tests cover search/error flows, actual 48dp hit regions and Figma snapshots,
-   including 320dp/200% text. Native integration reconstructs the app scope from
-   real disk storage, retries retained work and searches the real archived record.
+   failure, concurrent restore and disposal. Widget tests cover search/error flows,
+   actual 48dp hit regions and Figma snapshots, including restored search and
+   320dp/200% text. Native integration reconstructs the app scope from real disk
+   storage, retries retained work and searches the real archived record.
 
 6. **Scope/next four hours.** iOS first; Android added on request. No background
    sync, connectivity package, unbounded retries or generic repository framework. Manual retries avoid failure
