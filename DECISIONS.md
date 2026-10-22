@@ -35,8 +35,8 @@
    including 320dp/200% text. Native integration reconstructs the app scope from
    real disk storage, retries retained work and searches the real archived record.
 
-6. **Scope/next four hours.** iOS only; no background sync, connectivity package,
-   unbounded retries or generic repository framework. Manual retries avoid failure
+6. **Scope/next four hours.** iOS first; Android added on request. No background
+   sync, connectivity package, unbounded retries or generic repository framework. Manual retries avoid failure
    loops. Next: OS process-kill automation, broader VoiceOver review and a server
    revision/idempotency contract for multi-device conflicts. Cached search can be
    incomplete while offline and is labelled accordingly.

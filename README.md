@@ -1,28 +1,38 @@
 # My visits
 
-A single-screen iOS Flutter app for field agents using the supplied `FlakyTaskApi`.
+A single-screen Flutter app for iOS and Android using the supplied `FlakyTaskApi`.
 Built with **Flutter 3.47.2 stable / Dart 3.13.2**. Implementation uses Flutter Hooks
 for widget-local controllers and Riverpod `Notifier` for application state.
 
 ## Run
 
-Requirements: Flutter 3.47.2 (or a compatible recent stable release), Xcode, and an
-iOS simulator. Dependencies are pinned in `pubspec.lock`.
+Requirements: Flutter 3.47.2 (or a compatible recent stable release), plus Xcode
+and an iOS simulator, or Android Studio/Android SDK and an Android emulator or
+device. Dependencies are pinned in `pubspec.lock`.
 
 ```sh
 flutter pub get
 flutter devices
-flutter run -d <ios-device-id>
+flutter run -d <device-id>
 ```
 
 To exercise a different deterministic failure sequence:
 
 ```sh
-flutter run -d <ios-device-id> --dart-define=API_SEED=7
+flutter run -d <device-id> --dart-define=API_SEED=7
 ```
 
-A physical device requires your own signing team in Xcode. Only iOS is included;
-Android, web and desktop are outside the assessment scope.
+A physical iOS device requires your own signing team in Xcode. Web and desktop
+are not configured. To start an Android emulator and build a debug APK:
+
+```sh
+flutter emulators
+flutter emulators --launch <android-emulator-id>
+flutter run -d <android-device-id>
+flutter build apk --debug
+```
+
+The APK is written to `build/app/outputs/flutter-apk/app-debug.apk`.
 
 ## Use
 
@@ -46,8 +56,12 @@ viewport with 200% system text size; the golden test also verifies that exact ca
 ```sh
 flutter analyze
 flutter test
-flutter test integration_test/visits_flow_test.dart -d <ios-device-id>
+flutter test integration_test/visits_flow_test.dart -d <device-id>
 ```
+
+The native integration flow passes on the iPhone 18 Pro simulator (iOS 27.0)
+and Pixel 9 Pro emulator (Android 17). Android debug APK compilation and
+`flutter analyze` also pass.
 
 The unit/widget suite covers stale searches and pages, pagination deduplication,
 rapid toggles, rejected and ambiguous writes, storage failures/recovery, cold
